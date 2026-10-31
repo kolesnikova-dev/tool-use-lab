@@ -1,0 +1,8 @@
+// Function to print the current time
+function printCurrentTime() {
+  const currentTime = new Date();
+  console.log(currentTime.toString());
+}
+
+// Call the function
+printCurrentTime();
