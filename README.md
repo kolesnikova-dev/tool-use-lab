@@ -64,6 +64,20 @@ Things worth knowing:
 ## Web search (opt-in)
 Anthropic's `web_search_20250305` server tool. Anthropic runs the search; the app declares it, shows the sources, and contains the risk.
 
+### How to use web search tool
+Web search is **off until you turn it on**: every search costs money and sends Claude's queries off your machine.
+
+1. At the `you>` prompt, type `/web on`. You should see `Web search ON…`, the allowed domains and `Searches used: 0/20.`
+2. Ask something that needs current information, e.g. `What is the latest stable .NET release according to Microsoft Learn?`
+3. After the answer you get `Searched: "…"` (the query Claude ran) and a `Sources:` list of the pages it cited.
+4. `/web status` shows how many searches you have used; `/web off` turns search off again.
+
+Don't ask Claude whether it can search the web: with search off it will truthfully say no, and with it on its answer is only a guess. Use `/web status` to see the real state.
+
+If `/web on` says search is **unavailable**, look at the start of the session for `Web search disabled: …`. It names the bad setting, usually a malformed `WEB_SEARCH_*` value in `.env`. With no such values the defaults apply and nothing is needed.
+
+Defaults: results only come from `learn.microsoft.com`, `platform.claude.com`, `anthropic.com`, `github.com`, `developer.mozilla.org` and `wikipedia.org`; at most 3 searches per request and 20 per session. A question those sites cannot answer finds nothing.
+
 | Command | Effect |
 | --- | --- |
 | `/web on` / `/web off` | Turn search on or off (off at startup) |
