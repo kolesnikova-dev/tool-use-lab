@@ -5,7 +5,7 @@ using Anthropic.Exceptions;
 using Anthropic.Helpers;
 using Anthropic.Models.Messages;
 
-namespace ClaudeReminder;
+namespace ToolUseLab;
 
 internal static class ChatService
 {

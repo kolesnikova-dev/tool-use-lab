@@ -2,7 +2,7 @@ using System;
 using System.Globalization;
 using System.Text.Json.Serialization;
 
-namespace ClaudeReminder;
+namespace ToolUseLab;
 
 internal static class ToolNames
 {

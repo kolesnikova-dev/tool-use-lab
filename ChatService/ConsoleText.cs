@@ -1,6 +1,6 @@
 using System.Text;
 
-namespace ClaudeReminder;
+namespace ToolUseLab;
 
 /// <summary>Guards the terminal against text that came from the model or the web.</summary>
 internal static class ConsoleText

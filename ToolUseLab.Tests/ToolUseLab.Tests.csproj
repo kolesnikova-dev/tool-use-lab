@@ -19,7 +19,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\ClaudeReminder.csproj" />
+    <ProjectReference Include="..\ToolUseLab.csproj" />
   </ItemGroup>
 
 </Project>

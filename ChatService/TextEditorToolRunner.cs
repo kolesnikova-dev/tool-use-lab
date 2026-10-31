@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace ClaudeReminder;
+namespace ToolUseLab;
 
 /// <summary>Translates a <c>str_replace_based_edit_tool</c> call into a <see cref="TextEditorTool"/> method call.</summary>
 internal static class TextEditorToolRunner

@@ -1,7 +1,7 @@
 using System.Text.Json;
 using Anthropic.Models.Messages;
 
-namespace ClaudeReminder.Tests;
+namespace ToolUseLab.Tests;
 
 /// <summary>
 /// The few places web search touches the existing chat code. They read the console, so they share one

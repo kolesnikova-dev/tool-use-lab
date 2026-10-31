@@ -3,9 +3,9 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ClaudeReminder", "ClaudeReminder.csproj", "{F5F1ADCA-E589-4104-96B1-103555B1C07F}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ToolUseLab", "ToolUseLab.csproj", "{F5F1ADCA-E589-4104-96B1-103555B1C07F}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ClaudeReminder.Tests", "ClaudeReminder.Tests\ClaudeReminder.Tests.csproj", "{87FC3100-764C-4030-BEC7-4460064CE53A}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ToolUseLab.Tests", "ToolUseLab.Tests\ToolUseLab.Tests.csproj", "{87FC3100-764C-4030-BEC7-4460064CE53A}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

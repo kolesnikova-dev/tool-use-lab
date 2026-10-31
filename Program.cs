@@ -3,7 +3,7 @@ using DotNetEnv;
 using Anthropic;
 using Anthropic.Models.Messages;
 
-namespace ClaudeReminder
+namespace ToolUseLab
 {
 
     internal sealed class ChatConfig

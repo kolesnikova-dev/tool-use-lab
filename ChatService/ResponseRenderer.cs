@@ -2,7 +2,7 @@ using System.Text;
 using System.Text.Json;
 using Anthropic.Models.Messages;
 
-namespace ClaudeReminder;
+namespace ToolUseLab;
 
 /// <summary>What web search adds to a response, as plain text. Used as a footer so it works the same whether or not the answer was streamed.</summary>
 internal static class ResponseRenderer

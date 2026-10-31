@@ -1,7 +1,7 @@
 using System.Text.Json;
-using ClaudeReminder;
+using ToolUseLab;
 
-namespace ClaudeReminder.Tests;
+namespace ToolUseLab.Tests;
 
 public sealed class TextEditorToolTests : IDisposable
 {

@@ -1,6 +1,6 @@
 using System.Text;
 
-namespace ClaudeReminder;
+namespace ToolUseLab;
 
 /// <summary>
 /// An expected, model-facing failure (bad path, no match, ...). The message is sent

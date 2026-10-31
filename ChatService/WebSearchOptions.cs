@@ -2,7 +2,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using Anthropic.Models.Messages;
 
-namespace ClaudeReminder;
+namespace ToolUseLab;
 
 /// <summary>
 /// Settings for Anthropic's server-side web search. Always an allowlist (the API rejects an allowlist

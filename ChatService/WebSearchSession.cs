@@ -1,6 +1,6 @@
 using Anthropic.Models.Messages;
 
-namespace ClaudeReminder;
+namespace ToolUseLab;
 
 /// <summary>Per-session on/off switch and search budget. max_uses only caps one request, so the session counts every response.</summary>
 internal sealed class WebSearchSession(WebSearchOptions options)
