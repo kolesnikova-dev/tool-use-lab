@@ -97,7 +97,9 @@ public class WebSearchOptionsTests
 
 public class WebSearchSessionTests
 {
-    private static Message WithSearches(int n) => Fixtures.Msg("end_turn", """[{"type":"text","text":"x"}]""", n);
+    // n search calls: the session counts server_tool_use blocks.
+    private static Message WithSearches(int n) => Fixtures.Msg("end_turn", "[" + string.Join(",", Enumerable.Repeat(
+        """{"type":"server_tool_use","id":"s","name":"web_search","input":{"query":"q"}}""", n)) + "]");
 
     [Fact]
     public void Search_is_off_until_enabled()
@@ -175,12 +177,11 @@ internal static class Fixtures
         ]
         """;
 
-    internal static Message Msg(string stopReason, string contentJson, int searches = 0) =>
+    internal static Message Msg(string stopReason, string contentJson) =>
         Message.FromRawUnchecked(JsonSerializer.Deserialize<Dictionary<string, JsonElement>>("""
             {"id":"msg_1","type":"message","role":"assistant","model":"claude-haiku-4-5","content":CONTENT,
-             "stop_reason":"STOP","stop_sequence":null,
-             "usage":{"input_tokens":1,"output_tokens":1,"server_tool_use":{"web_search_requests":SEARCHES}}}
-            """.Replace("CONTENT", contentJson).Replace("STOP", stopReason).Replace("SEARCHES", searches.ToString()))!);
+             "stop_reason":"STOP","stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":1}}
+            """.Replace("CONTENT", contentJson).Replace("STOP", stopReason))!);
 
     internal static string Json(object value) => JsonSerializer.Serialize(value);
 }
@@ -188,29 +189,28 @@ internal static class Fixtures
 public class ResponseRendererTests
 {
     [Fact]
-    public void Search_response_shows_query_marker_and_sources()
+    public void Footer_lists_the_query_and_the_cited_source()
     {
-        string text = ResponseRenderer.Render(Fixtures.Msg("end_turn", Fixtures.Search, 1));
+        string footer = ResponseRenderer.Footer(Fixtures.Msg("end_turn", Fixtures.Search));
 
-        Assert.Contains("Searched: \"claude shannon birth date\"", text);
-        Assert.Contains("Born in 1916[1]", text);
-        Assert.Contains("Sources:", text);
-        Assert.Contains("[1] Claude Shannon - Wikipedia - https://en.wikipedia.org/wiki/Claude_Shannon", text);
+        Assert.Contains("Searched: \"claude shannon birth date\"", footer);
+        Assert.Contains("Sources:", footer);
+        Assert.Contains("- Claude Shannon - Wikipedia - https://en.wikipedia.org/wiki/Claude_Shannon", footer);
+        Assert.DoesNotContain("[1]", footer); // no inline markers: streamed text is already on screen
     }
 
     [Fact]
-    public void Repeated_citations_of_one_page_share_a_number()
+    public void A_page_cited_several_times_is_listed_once()
     {
-        string cite(string url) => $$"""{"type":"web_search_result_location","url":"{{url}}","title":"T","encrypted_index":"i","cited_text":"c"}""";
-        string json = $$"""
-            [{"type":"text","text":"A","citations":[{{cite("https://a.com/")}},{{cite("https://a.com/")}}]},
-             {"type":"text","text":"B","citations":[{{cite("https://b.com/")}},{{cite("https://a.com/")}}]}]
-            """;
+        string cite(string url) => """{"type":"web_search_result_location","url":"URL","title":"T","encrypted_index":"i","cited_text":"c"}""".Replace("URL", url);
+        string json = """
+            [{"type":"text","text":"A","citations":[CITE_A,CITE_A]},
+             {"type":"text","text":"B","citations":[CITE_B,CITE_A]}]
+            """.Replace("CITE_A", cite("https://a.com/")).Replace("CITE_B", cite("https://b.com/"));
 
-        string text = ResponseRenderer.Render(Fixtures.Msg("end_turn", json));
+        string footer = ResponseRenderer.Footer(Fixtures.Msg("end_turn", json));
 
-        Assert.Contains("A[1]B[2][1]", text);
-        Assert.Single(text.Split('\n'), line => line.StartsWith("[1] "));
+        Assert.Equal(["- T - https://a.com/", "- T - https://b.com/"], footer.Split('\n').Select(l => l.Trim()).Skip(1));
     }
 
     [Fact]
@@ -218,26 +218,28 @@ public class ResponseRendererTests
     {
         string json = """[{"type":"text","text":"x","citations":[{"type":"web_search_result_location","url":"javascript:alert(1)","title":"T","encrypted_index":"i","cited_text":"c"}]}]""";
 
-        string text = ResponseRenderer.Render(Fixtures.Msg("end_turn", json));
-
-        Assert.Equal("x", text.Trim());
+        Assert.Equal("", ResponseRenderer.Footer(Fixtures.Msg("end_turn", json)));
     }
 
     [Fact]
-    public void Hostile_text_titles_and_queries_are_sanitised()
+    public void Footer_is_empty_when_nothing_was_searched() =>
+        Assert.Equal("", ResponseRenderer.Footer(Fixtures.Msg("end_turn", """[{"type":"text","text":"hi"}]""")));
+
+    [Fact]
+    public void Hostile_queries_and_titles_are_sanitised()
     {
         string esc = ((char)27).ToString();
         string json = Fixtures.Json(new object[]
         {
             new { type = "server_tool_use", id = "s1", name = "web_search", input = new { query = $"q{esc}[2J" } },
-            new { type = "text", text = $"hello{esc}[31m", citations = new[]
+            new { type = "text", text = "hello", citations = new[]
                 { new { type = "web_search_result_location", url = "https://a.com/", title = $"T{esc}]0;x", encrypted_index = "i", cited_text = "c" } } },
         });
 
-        string text = ResponseRenderer.Render(Fixtures.Msg("end_turn", json));
+        string footer = ResponseRenderer.Footer(Fixtures.Msg("end_turn", json));
 
-        Assert.DoesNotContain(text, c => char.IsControl(c) && c is not ('\n' or '\r'));
-        Assert.Contains("hello", text);
+        Assert.Contains("Searched:", footer);
+        Assert.DoesNotContain(footer, c => char.IsControl(c) && c is not ('\n' or '\r'));
     }
 
     [Theory]
@@ -251,17 +253,22 @@ public class ResponseRendererTests
     {
         string json = """[{"type":"web_search_tool_result","tool_use_id":"s1","content":{"type":"web_search_tool_result_error","error_code":"CODE"}}]""".Replace("CODE", code);
 
-        string text = ResponseRenderer.Render(Fixtures.Msg("end_turn", json));
+        string footer = ResponseRenderer.Footer(Fixtures.Msg("end_turn", json));
 
-        Assert.Contains("Web search failed", text);
-        Assert.Contains(expected, text);
+        Assert.Contains("Web search failed", footer);
+        Assert.Contains(expected, footer);
     }
 
     [Fact]
-    public void Web_content_is_detected_only_when_pages_came_back()
+    public void Web_content_and_web_blocks_are_detected_separately()
     {
-        Assert.True(ResponseRenderer.HasWebContent(Fixtures.Msg("end_turn", Fixtures.Search)));
-        Assert.False(ResponseRenderer.HasWebContent(Fixtures.Msg("end_turn", """[{"type":"web_search_tool_result","tool_use_id":"s1","content":[]}]""")));
-        Assert.False(ResponseRenderer.HasWebContent(Fixtures.Msg("end_turn", """[{"type":"text","text":"hi"}]""")));
+        var withPages = Fixtures.Msg("end_turn", Fixtures.Search);
+        var noHits = Fixtures.Msg("end_turn", """[{"type":"web_search_tool_result","tool_use_id":"s1","content":[]}]""");
+        var plain = Fixtures.Msg("end_turn", """[{"type":"text","text":"hi"}]""");
+
+        Assert.True(ResponseRenderer.HasWebContent(withPages));
+        Assert.False(ResponseRenderer.HasWebContent(noHits)); // searched, but nothing untrusted came back
+        Assert.True(ResponseRenderer.HasWebBlocks(noHits));
+        Assert.False(ResponseRenderer.HasWebBlocks(plain));
     }
 }

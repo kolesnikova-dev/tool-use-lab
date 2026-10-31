@@ -4,13 +4,14 @@ using Anthropic.Models.Messages;
 
 namespace ClaudeReminder;
 
-/// <summary>Turns an API response into terminal text: queries, the answer with [n] citation markers, then a Sources list.</summary>
+/// <summary>What web search adds to a response, as plain text. Used as a footer so it works the same whether or not the answer was streamed.</summary>
 internal static class ResponseRenderer
 {
-    internal static string Render(Message response)
+    /// <summary>The queries Claude ran, any search errors, and the cited pages (http/https only, de-duplicated). Empty when there is nothing to show.</summary>
+    internal static string Footer(Message response)
     {
         var sb = new StringBuilder();
-        var sources = new List<(string Title, string Url)>();
+        var sources = new OrderedDictionary<string, string>(); // url -> title
 
         foreach (var block in response.Content)
         {
@@ -19,20 +20,18 @@ internal static class ResponseRenderer
             else if (block.TryPickWebSearchToolResult(out var result) && result.Content.TryPickError(out var error))
                 sb.AppendLine($"Web search failed: {Describe(error.ErrorCode.Raw())}.");
             else if (block.TryPickText(out var text))
-            {
-                sb.Append(ConsoleText.Sanitize(text.Text));
-                foreach (int n in CitationNumbers(text, sources).Distinct())
-                    sb.Append($"[{n}]");
-            }
+                foreach (var citation in text.Citations ?? [])
+                    if (citation.TryPickCitationsWebSearchResultLocation(out var page) && ConsoleText.SafeUrl(page.Url) is { } url)
+                        sources.TryAdd(url, ConsoleText.Sanitize(page.Title));
         }
 
         if (sources.Count > 0)
         {
-            sb.AppendLine().AppendLine().AppendLine("Sources:");
-            for (int i = 0; i < sources.Count; i++)
-                sb.AppendLine($"[{i + 1}] {sources[i].Title} - {sources[i].Url}");
+            sb.AppendLine("Sources:");
+            foreach (var (url, title) in sources)
+                sb.AppendLine($"- {title} - {url}");
         }
-        return sb.ToString();
+        return sb.ToString().TrimEnd();
     }
 
     /// <summary>True when a search actually returned pages, i.e. untrusted web text is now in the conversation.</summary>
@@ -40,23 +39,9 @@ internal static class ResponseRenderer
         response.Content.Any(b => b.TryPickWebSearchToolResult(out var r)
             && r.Content.TryPickWebSearchResultBlocks(out var hits) && hits.Count > 0);
 
-    // Numbers sources by first appearance; citations whose URL is not plain http(s) are dropped.
-    private static IEnumerable<int> CitationNumbers(TextBlock text, List<(string Title, string Url)> sources)
-    {
-        foreach (var citation in text.Citations ?? [])
-        {
-            if (!citation.TryPickCitationsWebSearchResultLocation(out var location) || ConsoleText.SafeUrl(location.Url) is not { } url)
-                continue;
-
-            int index = sources.FindIndex(s => s.Url == url);
-            if (index < 0)
-            {
-                sources.Add((ConsoleText.Sanitize(location.Title), url));
-                index = sources.Count - 1;
-            }
-            yield return index + 1;
-        }
-    }
+    /// <summary>True when the response contains search blocks that must be echoed back unchanged on the next request.</summary>
+    internal static bool HasWebBlocks(Message response) =>
+        response.Content.Any(b => b.TryPickServerToolUse(out _) || b.TryPickWebSearchToolResult(out _));
 
     private static string Describe(string? code) => code switch
     {
