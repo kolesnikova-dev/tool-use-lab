@@ -235,7 +235,7 @@ internal static class ChatService
                     return TextEditorToolRunner.Execute(editor, input);
 
                 case ToolNames.SetReminder:
-                    string reminder = GetString(input, "content") ?? "", when = GetString(input, "timestamp") ?? "";
+                    string reminder = Utils.GetString(input, "content") ?? "", when = Utils.GetString(input, "timestamp") ?? "";
                     // Once web pages were read, a page could have talked Claude into this: ask first.
                     if (web is { WebContentSeen: true } && !ConfirmWrite($"set_reminder for {when}:\n{reminder}", web))
                         return ("The user declined this reminder.", true);
@@ -244,15 +244,15 @@ internal static class ChatService
 
                 case ToolNames.AddDurationToDatetime:
                     var result = Tools.AddDurationToDatetime(
-                        GetString(input, "datetime_str"),
-                        GetDouble(input, "duration"),
-                        GetString(input, "unit") ?? "days");
+                        Utils.GetString(input, "datetime_str"),
+                        Utils.GetDouble(input, "duration"),
+                        Utils.GetString(input, "unit") ?? "days");
                     return result.Success
                         ? (Tools.FormatForDisplay(result), false)
                         : (result.Error!, true);
 
                 case ToolNames.GetCurrentDatetime:
-                    return (Tools.GetCurrentDatetime(GetString(input, "date_format")), false);
+                    return (Tools.GetCurrentDatetime(Utils.GetString(input, "date_format")), false);
 
                 default:
                     return ($"Error: Unknown tool '{toolName}'.", true);
@@ -262,37 +262,6 @@ internal static class ChatService
         {
             return ($"Error: {ex.Message}", true);
         }
-    }
-
-    internal static string? GetString(IReadOnlyDictionary<string, JsonElement> input, string key) =>
-        input.TryGetValue(key, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
-
-    internal static double GetDouble(IReadOnlyDictionary<string, JsonElement> input, string key, double fallback = 0) =>
-        input.TryGetValue(key, out var v) && v.ValueKind == JsonValueKind.Number ? v.GetDouble() : fallback;
-
-    // Accepts 3 and 3.0 (models occasionally send whole numbers as floats); null for anything else.
-    internal static int? GetInt(IReadOnlyDictionary<string, JsonElement> input, string key)
-    {
-        if (!input.TryGetValue(key, out var v) || v.ValueKind != JsonValueKind.Number)
-            return null;
-        if (v.TryGetInt32(out int whole))
-            return whole;
-        return v.TryGetDouble(out double d) && d == Math.Truncate(d) && Math.Abs(d) <= int.MaxValue ? (int)d : null;
-    }
-
-    internal static int[]? GetIntArray(IReadOnlyDictionary<string, JsonElement> input, string key)
-    {
-        if (!input.TryGetValue(key, out var v) || v.ValueKind != JsonValueKind.Array)
-            return null;
-
-        var result = new List<int>();
-        foreach (var item in v.EnumerateArray())
-        {
-            if (item.ValueKind != JsonValueKind.Number || !item.TryGetInt32(out int n))
-                return null;
-            result.Add(n);
-        }
-        return result.ToArray();
     }
 
     internal static void AddUserMessage(List<MessageParam> messages, MessageParamContent message) =>

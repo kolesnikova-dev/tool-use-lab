@@ -10,25 +10,25 @@ internal static class TextEditorToolRunner
     {
         try
         {
-            string path = ChatService.GetString(input, "path") ?? "";
+            string path = Utils.GetString(input, "path") ?? "";
 
-            string result = ChatService.GetString(input, "command") switch
+            string result = Utils.GetString(input, "command") switch
             {
-                "view" => editor.View(path, ChatService.GetIntArray(input, "view_range")),
+                "view" => editor.View(path, Utils.GetIntArray(input, "view_range")),
 
                 "str_replace" => editor.StrReplace(
                     path,
                     RequireString(input, "old_str"),
-                    ChatService.GetString(input, "new_str") ?? ""), // omitted new_str means "delete old_str"
+                    Utils.GetString(input, "new_str") ?? ""), // omitted new_str means "delete old_str"
 
                 "create" => editor.Create(path, RequireString(input, "file_text")),
 
                 // text_editor_20250728 sends "insert_text"; older schema versions sent "new_str".
                 "insert" => editor.Insert(
                     path,
-                    ChatService.GetInt(input, "insert_line")
+                    Utils.GetInt(input, "insert_line")
                         ?? throw new TextEditorException("Missing required parameter 'insert_line'."),
-                    ChatService.GetString(input, "insert_text")
+                    Utils.GetString(input, "insert_text")
                         ?? RequireString(input, "new_str")),
 
                 "undo_edit" => throw new TextEditorException("undo_edit is not supported. Ask the user to undo with /undo."),
@@ -50,6 +50,6 @@ internal static class TextEditorToolRunner
     }
 
     private static string RequireString(IReadOnlyDictionary<string, JsonElement> input, string key) =>
-        ChatService.GetString(input, key)
+        Utils.GetString(input, key)
             ?? throw new TextEditorException($"Missing required parameter '{key}'.");
 }
