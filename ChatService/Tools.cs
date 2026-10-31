@@ -54,7 +54,7 @@ internal static class Tools
 
     internal static void SetReminder(string content, string timestamp)
     {
-        Console.WriteLine($"----\nSetting the following reminder for {timestamp}:\n{content}\n----");
+        Console.WriteLine($"----\nSetting the following reminder for {ConsoleText.Sanitize(timestamp)}:\n{ConsoleText.Sanitize(content)}\n----");
     }
 
     // ---------- add_duration_to_datetime ----------

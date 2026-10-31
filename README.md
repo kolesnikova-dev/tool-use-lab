@@ -61,3 +61,18 @@ Things worth knowing:
 - Missing optional arguments come back as `null` (strings) or the fallback (numbers), so give them defaults in the `Tools` method.
 - Return plain, readable text. Claude uses it to write the final reply.
 - If Claude never calls the tool, improve the `Description` first.
+## Web search (opt-in)
+Anthropic's `web_search_20250305` server tool. Anthropic runs the search; the app declares it, shows the sources, and contains the risk.
+
+| Command | Effect |
+| --- | --- |
+| `/web on` / `/web off` | Turn search on or off (off at startup) |
+| `/web status` | Searches used out of the session limit |
+
+Optional `.env` settings: `WEB_SEARCH_ALLOWED_DOMAINS` (comma list, replaces the default allowlist), `WEB_SEARCH_MAX_USES` (per request, default 3), `WEB_SEARCH_SESSION_LIMIT` (default 20). An invalid value disables search and says why.
+
+**Cost and privacy:** $10 per 1,000 searches. Claude writes the queries, so conversation content can leave your machine; each query is printed. No location is sent.
+
+**Safety:** only allowlisted, ASCII-only domains. Search results are untrusted: once any page has been read, file edits and reminders show a warning and ask first, and all model/web text is stripped of terminal control codes before printing. Residual risk: pages on allowed sites (e.g. GitHub, Wikipedia) can still contain injected instructions, so read the confirmation prompts.
+
+Every domain you allow must be crawlable by Anthropic: one blocked domain (such as `stackoverflow.com`) makes the API reject the whole request.

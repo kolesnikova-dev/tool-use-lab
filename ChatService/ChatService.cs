@@ -1,148 +1,186 @@
-using System.Text;
 using System.Text.Json;
 using Anthropic;
+using Anthropic.Exceptions;
 using Anthropic.Models.Messages;
 
 namespace ClaudeReminder;
 
+/// <summary>Everything one conversation owns: history, tools and what has been seen so far.</summary>
+internal sealed class ChatSession
+{
+    private readonly Func<string, bool> _prompt;
+
+    public ChatSession(WebSearchOptions? webSearch, Func<string, bool> prompt)
+    {
+        _prompt = prompt;
+        Web = webSearch is null ? null : new WebSearchSession(webSearch);
+        Editor = new TextEditorTool(confirmWrite: Confirm);
+    }
+
+    public List<MessageParam> Messages { get; } = [];
+    public TextEditorTool Editor { get; }
+    public WebSearchSession? Web { get; }
+
+    /// <summary>Set once any search returned pages; from then on side effects get a warning (and reminders a prompt).</summary>
+    public bool WebContentSeen { get; set; }
+
+    /// <summary>Asks the user to approve a side effect. The summary is model-derived, so it is sanitised first.</summary>
+    public bool Confirm(string summary) => _prompt(
+        (WebContentSeen ? "WARNING: this conversation contains untrusted web content. Review this carefully.\n" : "")
+        + ConsoleText.Sanitize(summary));
+}
+
 internal static class ChatService
 {
+    internal const int MaxContinuations = 5;
+
     internal static async Task Chat(AnthropicClient client, ChatConfig config)
     {
-
-        List<MessageParam> messages = new();
-        var editor = new TextEditorTool(confirmWrite: ConfirmWrite);
+        var session = new ChatSession(config.WebSearch, ConsolePrompt);
         while (true)
         {
             Console.Write("you> ");
-            string? userMessage = Console.ReadLine();
-            if (string.IsNullOrWhiteSpace(userMessage)) break;
+            string? input = Console.ReadLine();
+            if (string.IsNullOrWhiteSpace(input)) break;
 
-            if (userMessage.StartsWith('/'))
+            if (input.StartsWith('/'))
+                Console.WriteLine(HandleCommand(session, input)); // local commands are never sent to Claude
+            else
+                await ProcessUserTurnAsync(session, input, p => client.Messages.Create(p), config, Console.WriteLine);
+        }
+    }
+
+    /// <summary>
+    /// One user message and everything it triggers: tool rounds and pause_turn continuations.
+    /// Any failure rolls the history back so it never holds a half-finished turn.
+    /// </summary>
+    internal static async Task ProcessUserTurnAsync(
+        ChatSession session, string userText, Func<MessageCreateParams, Task<Message>> send, ChatConfig config, Action<string> write)
+    {
+        int turnStart = session.Messages.Count;
+        // Fixed for the whole turn: a paused turn may end on an unfinished server tool call, and the
+        // continuation must still declare that tool or the API answers 400.
+        var webTool = session.Web?.Tool();
+
+        void Abort(string reason)
+        {
+            session.Messages.RemoveRange(turnStart, session.Messages.Count - turnStart);
+            write(reason);
+        }
+
+        AddUserMessage(session.Messages, userText);
+        try
+        {
+            for (int pauses = 0; ;)
             {
-                HandleSlashCommand(editor, userMessage);
-                continue; // local commands are never sent to Claude
-            }
+                var response = await send(BuildParameters(config, session, webTool));
+                session.Web?.Record(response);
+                session.WebContentSeen |= ResponseRenderer.HasWebContent(response);
 
-            AddUserMessage(messages, userMessage);
+                string shown = ResponseRenderer.Render(response).Trim();
+                if (shown.Length > 0) write($"claude> {shown}");
 
-            while (true) // inner loop
-            {
-                // The SDK serializes the typed request (messages, tools, system) to JSON
-                // and deserializes the response, so no manual JSON handling is needed here.
-                var response = await client.Messages.Create(BuildParameters(config, messages));
+                // Echo every block exactly as received: search results carry encrypted content that later turns need.
+                AddAssistantMessage(session.Messages, ToParam(response));
 
                 if (response.StopReason == StopReason.ToolUse)
+                    AddUserMessage(session.Messages, RunTools(session, response));
+                else if (response.StopReason == StopReason.PauseTurn && ++pauses <= MaxContinuations)
+                    continue;
+                else if (response.StopReason == StopReason.PauseTurn || response.StopReason == StopReason.MaxTokens)
                 {
-                    HandleToolUse(messages, response, editor);
-                    continue; // adds assistant turn + tool_result turn
+                    Abort("claude> (stopped: the answer was too long or the search ran too long; try a narrower question)");
+                    return;
                 }
-                if (response.StopReason == StopReason.MaxTokens)
-                {
-                    Console.WriteLine($"claude> Oops! Out of tokens.");
-                    break;
-                }
-
-                var assistantMessage = TextFromMessage(response);
-                Console.WriteLine($"claude> {assistantMessage}");
-                AddAssistantMessage(messages, assistantMessage);
-                break; // back to asking the user
+                else
+                    return;
+            }
+        }
+        catch (AnthropicException ex)
+        {
+            Abort($"API error: {Brief(ex)}");
+            // The organization (Console settings) can disable web search or narrow its domains.
+            if (ex is AnthropicBadRequestException && session.Web is { Enabled: true } web
+                && (ex.Message.Contains("web search", StringComparison.OrdinalIgnoreCase) || ex.Message.Contains("domain", StringComparison.OrdinalIgnoreCase)))
+            {
+                web.Enabled = false;
+                write("Web search was turned off because the API rejected it. Check your organization's web search settings.");
             }
         }
     }
 
-    private static bool ConfirmWrite(string summary)
-    {
-        Console.WriteLine($"----\n{summary}\n----");
-        Console.Write("Apply this edit? [y/N] ");
-        string? answer = Console.ReadLine()?.Trim();
-        return answer is not null
-            && (answer.Equals("y", StringComparison.OrdinalIgnoreCase)
-                || answer.Equals("yes", StringComparison.OrdinalIgnoreCase));
-    }
-
-    private static void HandleSlashCommand(TextEditorTool editor, string line)
+    internal static string HandleCommand(ChatSession session, string line)
     {
         string[] parts = line.Split(' ', 2, StringSplitOptions.TrimEntries);
+        string arg = parts.Length > 1 ? parts[1] : "";
         try
         {
-            switch (parts[0])
+            return parts[0] switch
             {
-                case "/undo" when parts.Length == 2 && parts[1].Length > 0:
-                    Console.WriteLine(editor.UndoEdit(parts[1]));
-                    break;
-                case "/clean-backups":
-                    Console.WriteLine($"Deleted {editor.ClearBackups()} backup file(s).");
-                    break;
-                default:
-                    Console.WriteLine("Commands: /undo <path>, /clean-backups");
-                    break;
-            }
+                "/undo" when arg.Length > 0 => session.Editor.UndoEdit(arg),
+                "/clean-backups" => $"Deleted {session.Editor.ClearBackups()} backup file(s).",
+                "/web" => WebCommand(session.Web, arg),
+                _ => "Commands: /undo <path>, /clean-backups, /web on|off|status",
+            };
         }
         catch (Exception ex) when (ex is TextEditorException or IOException or UnauthorizedAccessException)
         {
-            Console.WriteLine($"Error: {ex.Message}");
+            return $"Error: {ConsoleText.Sanitize(ex.Message)}";
         }
     }
 
-    private static void HandleToolUse(List<MessageParam> messages, Message response, TextEditorTool editor)
+    private static string WebCommand(WebSearchSession? web, string arg)
     {
-        // Collect any tool_use blocks in this response.
-        var toolUses = new List<ToolUseBlock>();
-        foreach (var block in response.Content)
-            if (block.TryPickToolUse(out var tu))
-                toolUses.Add(tu);
-        // 1. Echo Claude's assistant turn, including every tool_use block.
-        var assistantBlocks = new List<ContentBlockParam>();
-        foreach (var block in response.Content)
-        {
-            if (block.TryPickText(out var tb))
-                assistantBlocks.Add(new TextBlockParam { Text = tb.Text });
-            else if (block.TryPickToolUse(out var tu))
-                assistantBlocks.Add(new ToolUseBlockParam
-                {
-                    ID = tu.ID,
-                    Name = tu.Name,
-                    Input = tu.Input,
-                });
-        }
-        AddAssistantMessage(messages, assistantBlocks);
+        if (web is null)
+            return "Web search is unavailable: its configuration is missing or invalid.";
 
-        // 2. Execute each tool, collect results.
-        var resultBlocks = new List<ContentBlockParam>();
-        foreach (var tu in toolUses)
+        switch (arg)
         {
-            var (content, isError) = ExecuteTool(tu.Name, tu.Input, editor);
-            // content is already a string, which is what tool_result expects, and the SDK
-            // serializes this block to JSON. (A tool returning an object would need
-            // JsonSerializer.Serialize first, the equivalent of Python's json.dumps.)
-            resultBlocks.Add(new ToolResultBlockParam
-            {
-                ToolUseID = tu.ID,
-                Content = content,
-                IsError = isError,
-            });
+            case "on":
+                web.Enabled = true;
+                return $"Web search ON. Claude writes the queries and they leave your machine; each search costs about $0.01. " +
+                       $"Allowed domains: {string.Join(", ", web.Options.AllowedDomains)}. {web.Status}";
+            case "off":
+                web.Enabled = false;
+                return "Web search OFF.";
+            case "status":
+                return $"Web search is {(web.Enabled ? "ON" : "OFF")}. {web.Status}";
+            default:
+                return "Usage: /web on|off|status";
         }
-        // 3. Add the tool results as a user turn, then loop to ask Claude again.
-        AddUserMessage(messages, resultBlocks);
     }
 
-    // input arrives already deserialized by the SDK (no json.loads equivalent needed);
-    // the GetString/GetDouble helpers just read typed values out of it.
+    private static List<ContentBlockParam> RunTools(ChatSession session, Message response)
+    {
+        var results = new List<ContentBlockParam>();
+        foreach (var block in response.Content)
+        {
+            if (!block.TryPickToolUse(out var toolUse))
+                continue;
+
+            // content is already a string, which is what tool_result expects; the SDK serialises the block.
+            var (content, isError) = ExecuteTool(session, toolUse.Name, toolUse.Input);
+            results.Add(new ToolResultBlockParam { ToolUseID = toolUse.ID, Content = content, IsError = isError });
+        }
+        return results;
+    }
+
+    // input arrives already deserialized by the SDK; the Get* helpers read typed values out of it.
     private static (string content, bool isError) ExecuteTool(
-        string toolName, IReadOnlyDictionary<string, JsonElement> input, TextEditorTool editor)
+        ChatSession session, string toolName, IReadOnlyDictionary<string, JsonElement> input)
     {
         try
         {
             switch (toolName)
             {
                 case ToolNames.TextEditor:
-                    return TextEditorToolRunner.Execute(editor, input);
+                    return TextEditorToolRunner.Execute(session.Editor, input);
 
                 case ToolNames.SetReminder:
-                    Tools.SetReminder(
-                        GetString(input, "content") ?? "",
-                        GetString(input, "timestamp") ?? "");
+                    string reminder = GetString(input, "content") ?? "", when = GetString(input, "timestamp") ?? "";
+                    if (session.WebContentSeen && !session.Confirm($"set_reminder for {when}:\n{reminder}"))
+                        return ("The user declined this reminder.", true);
+                    Tools.SetReminder(reminder, when);
                     return ("Reminder set.", false);
 
                 case ToolNames.AddDurationToDatetime:
@@ -199,31 +237,37 @@ internal static class ChatService
     }
 
     internal static void AddUserMessage(List<MessageParam> messages, MessageParamContent message) =>
-       messages.Add(new MessageParam { Role = Role.User, Content = message });
+        messages.Add(new MessageParam { Role = Role.User, Content = message });
 
     internal static void AddAssistantMessage(List<MessageParam> messages, MessageParamContent message) =>
         messages.Add(new MessageParam { Role = Role.Assistant, Content = message });
 
-    internal static string TextFromMessage(Message message)
-    {
-        var reply = new StringBuilder();
-        foreach (var block in message.Content)
-            if (block.TryPickText(out var tb))
-                reply.Append(tb.Text);
+    internal static List<ContentBlockParam> ToParam(Message message) =>
+        message.Content.Select(block => new ContentBlockParam(block.Json)).ToList();
 
-        return reply.ToString();
-    }
-
-    private static MessageCreateParams BuildParameters(ChatConfig config, List<MessageParam> messages)
-    {
-        return new MessageCreateParams
+    private static MessageCreateParams BuildParameters(ChatConfig config, ChatSession session, WebSearchTool20250305? webTool) =>
+        new()
         {
             MaxTokens = config.MaxTokens,
-            Messages = messages,
+            Messages = session.Messages,
             Model = config.Model,
-            System = config.System,
+            System = webTool is null ? config.System : $"{config.System}\n\n{WebSearchOptions.SystemPromptAddendum}",
             StopSequences = config.StopSequences,
-            Tools = ToolSchemas.All,
+            Tools = ToolSchemas.Build(webTool),
         };
+
+    // Status and message only: never headers, the request or the response body.
+    private static string Brief(AnthropicException ex)
+    {
+        string message = ConsoleText.Sanitize(ex.Message);
+        if (message.Length > 300) message = message[..300] + "...";
+        return ex is AnthropicApiException api ? $"{(int)api.StatusCode} {message}" : message;
+    }
+
+    private static bool ConsolePrompt(string summary)
+    {
+        Console.WriteLine($"----\n{summary}\n----");
+        Console.Write("Apply this? [y/N] ");
+        return Console.ReadLine()?.Trim().ToLowerInvariant() is "y" or "yes";
     }
 }

@@ -5,6 +5,15 @@ namespace ClaudeReminder;
 
 internal static class ToolSchemas
 {
+    /// <summary>The always-on tools plus, when given, Anthropic's web search.</summary>
+    internal static List<ToolUnion> Build(WebSearchTool20250305? webSearch)
+    {
+        var tools = All;
+        if (webSearch is not null)
+            tools.Add(new ToolUnion(webSearch));
+        return tools;
+    }
+
     internal static List<ToolUnion> All => new()
     {
         new Tool
