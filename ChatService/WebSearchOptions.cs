@@ -64,7 +64,7 @@ internal sealed partial record WebSearchOptions(
             : throw new FormatException($"Invalid domain '{ConsoleText.Sanitize(entry)}': use a bare ASCII host like example.com or example.com/docs (no scheme, no wildcard in the host).");
     }
 
-    private static int ReadInt(Func<string, string?> getEnv, string key, int fallback) =>
+    internal static int ReadInt(Func<string, string?> getEnv, string key, int fallback) =>
         getEnv(key) switch
         {
             null or "" => fallback,

@@ -2,3 +2,4 @@
 **/bin/
 **/obj/
 .backups/
+.rag-cache/

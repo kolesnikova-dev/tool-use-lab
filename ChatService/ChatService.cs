@@ -16,6 +16,7 @@ internal static class ChatService
 
         List<MessageParam> messages = new();
         var web = config.WebSearch is null ? null : new WebSearchSession(config.WebSearch); // null: web search unavailable
+        var rag = config.Rag; // null: document search unavailable
         var editor = new TextEditorTool(confirmWrite: summary => ConfirmWrite(summary, web));
         while (true)
         {
@@ -25,7 +26,7 @@ internal static class ChatService
 
             if (userMessage.StartsWith('/'))
             {
-                HandleSlashCommand(editor, web, userMessage);
+                await HandleSlashCommand(editor, web, rag, userMessage);
                 continue; // local commands are never sent to Claude
             }
 
@@ -43,7 +44,7 @@ internal static class ChatService
                 Message response;
                 try
                 {
-                    response = await GetResponse(client, config, messages, webTool);
+                    response = await GetResponse(client, config, messages, webTool, rag is { Enabled: true });
                 }
                 catch (AnthropicException ex)
                 {
@@ -59,7 +60,7 @@ internal static class ChatService
 
                 if (response.StopReason == StopReason.ToolUse)
                 {
-                    HandleToolUse(messages, response, editor, web);
+                    await HandleToolUse(messages, response, editor, web, rag);
                     continue; // adds assistant turn + tool_result turn
                 }
 
@@ -130,7 +131,7 @@ internal static class ChatService
                 || answer.Equals("yes", StringComparison.OrdinalIgnoreCase));
     }
 
-    private static void HandleSlashCommand(TextEditorTool editor, WebSearchSession? web, string line)
+    private static async Task HandleSlashCommand(TextEditorTool editor, WebSearchSession? web, RagSession? rag, string line)
     {
         string[] parts = line.Split(' ', 2, StringSplitOptions.TrimEntries);
         try
@@ -146,8 +147,11 @@ internal static class ChatService
                 case "/web":
                     Console.WriteLine(WebCommand(web, parts.Length == 2 ? parts[1] : ""));
                     break;
+                case "/rag":
+                    Console.WriteLine(await RagCommand(rag, parts.Length == 2 ? parts[1] : ""));
+                    break;
                 default:
-                    Console.WriteLine("Commands: /undo <path>, /clean-backups, /web on|off|status");
+                    Console.WriteLine("Commands: /undo <path>, /clean-backups, /web on|off|status, /rag on|off|status|reindex");
                     break;
             }
         }
@@ -178,7 +182,43 @@ internal static class ChatService
         }
     }
 
-    internal static void HandleToolUse(List<MessageParam> messages, Message response, TextEditorTool editor, WebSearchSession? web)
+    /// <summary>Handles /rag. Every failure comes back as text: a broken index never ends the chat.</summary>
+    internal static async Task<string> RagCommand(RagSession? rag, string arg)
+    {
+        if (rag is null)
+            return "RAG is unavailable: set a valid VOYAGE_API_KEY (and check any RAG_* values) in .env.";
+
+        try
+        {
+            switch (arg)
+            {
+                case "on":
+                    var built = rag.Current is null ? await rag.ReindexAsync() : null; // keep an index built earlier this session
+                    rag.Enabled = true;
+                    return "RAG ON. Claude can search your documents. Their text was sent to Voyage AI to be embedded, and each question Claude searches for is sent too.\n"
+                        + (built is null ? rag.Status : Report(built));
+                case "off":
+                    rag.Enabled = false;
+                    return "RAG OFF.";
+                case "status":
+                    return $"RAG is {(rag.Enabled ? "ON" : "OFF")}. {rag.Status}";
+                case "reindex":
+                    return Report(await rag.ReindexAsync());
+                default:
+                    return "Usage: /rag on|off|status|reindex";
+            }
+        }
+        catch (RagException ex)
+        {
+            string kept = rag.Current is not null ? " The previous index is still in use." : "";
+            return $"RAG error: {ConsoleText.Sanitize(ex.Message)}{kept}";
+        }
+
+        static string Report(IndexBuild build) =>
+            string.Join("\n", build.Warnings.Select(w => $"Warning: {w}").Append(build.Summary));
+    }
+
+    internal static async Task HandleToolUse(List<MessageParam> messages, Message response, TextEditorTool editor, WebSearchSession? web, RagSession? rag = null)
     {
         // Collect any tool_use blocks in this response.
         var toolUses = new List<ToolUseBlock>();
@@ -207,7 +247,7 @@ internal static class ChatService
         var resultBlocks = new List<ContentBlockParam>();
         foreach (var tu in toolUses)
         {
-            var (content, isError) = ExecuteTool(tu.Name, tu.Input, editor, web);
+            var (content, isError) = await ExecuteTool(tu.Name, tu.Input, editor, web, rag);
             // content is already a string, which is what tool_result expects, and the SDK
             // serializes this block to JSON. (A tool returning an object would need
             // JsonSerializer.Serialize first, the equivalent of Python's json.dumps.)
@@ -224,8 +264,8 @@ internal static class ChatService
 
     // input arrives already deserialized by the SDK (no json.loads equivalent needed);
     // the GetString/GetDouble helpers just read typed values out of it.
-    internal static (string content, bool isError) ExecuteTool(
-        string toolName, IReadOnlyDictionary<string, JsonElement> input, TextEditorTool editor, WebSearchSession? web)
+    internal static async Task<(string content, bool isError)> ExecuteTool(
+        string toolName, IReadOnlyDictionary<string, JsonElement> input, TextEditorTool editor, WebSearchSession? web, RagSession? rag = null)
     {
         try
         {
@@ -253,6 +293,11 @@ internal static class ChatService
 
                 case ToolNames.GetCurrentDatetime:
                     return (Tools.GetCurrentDatetime(Utils.GetString(input, "date_format")), false);
+
+                case ToolNames.SearchDocuments:
+                    if (rag is not { Enabled: true })
+                        return ("Error: document search is off. The user can turn it on with /rag on.", true);
+                    return (await rag.SearchAsync(Utils.GetString(input, "query")), false);
 
                 default:
                     return ($"Error: Unknown tool '{toolName}'.", true);
@@ -285,9 +330,9 @@ internal static class ChatService
     // The SDK serializes the typed request (messages, tools, system) to JSON and
     // deserializes the response, so no manual JSON handling is needed here.
     private static async Task<Message> GetResponse(
-        AnthropicClient client, ChatConfig config, List<MessageParam> messages, WebSearchTool20250305? webTool)
+        AnthropicClient client, ChatConfig config, List<MessageParam> messages, WebSearchTool20250305? webTool, bool documentSearch)
     {
-        var parameters = BuildParameters(config, messages, webTool);
+        var parameters = BuildParameters(config, messages, webTool, documentSearch);
 
         if (!config.IsChatStream)
         {
@@ -335,16 +380,22 @@ internal static class ChatService
     internal static List<ContentBlockParam> ToParam(Message message) =>
         message.Content.Select(block => new ContentBlockParam(block.Json)).ToList();
 
-    private static MessageCreateParams BuildParameters(ChatConfig config, List<MessageParam> messages, WebSearchTool20250305? webTool)
+    private static MessageCreateParams BuildParameters(ChatConfig config, List<MessageParam> messages, WebSearchTool20250305? webTool, bool documentSearch)
     {
+        string system = config.System;
+        if (webTool is not null)
+            system += $"\n\n{WebSearchOptions.SystemPromptAddendum}";
+        if (documentSearch)
+            system += $"\n\n{RagSession.SystemPromptAddendum}";
+
         return new MessageCreateParams
         {
             MaxTokens = config.MaxTokens,
             Messages = messages,
             Model = config.Model,
-            System = webTool is null ? config.System : $"{config.System}\n\n{WebSearchOptions.SystemPromptAddendum}",
+            System = system,
             StopSequences = config.StopSequences,
-            Tools = ToolSchemas.Build(webTool),
+            Tools = ToolSchemas.Build(webTool, documentSearch),
         };
     }
 }

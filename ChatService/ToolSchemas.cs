@@ -5,14 +5,31 @@ namespace ToolUseLab;
 
 internal static class ToolSchemas
 {
-    /// <summary>The always-on tools plus, when given, Anthropic's web search.</summary>
-    internal static List<ToolUnion> Build(WebSearchTool20250305? webSearch)
+    /// <summary>The always-on tools plus, when asked for, Anthropic's web search and the document search.</summary>
+    internal static List<ToolUnion> Build(WebSearchTool20250305? webSearch, bool documentSearch = false)
     {
         var tools = All;
         if (webSearch is not null)
             tools.Add(new ToolUnion(webSearch));
+        if (documentSearch)
+            tools.Add(SearchDocuments);
         return tools;
     }
+
+    private static Tool SearchDocuments => new()
+    {
+        Name = ToolNames.SearchDocuments,
+        Description = "Searches the user's own documents (markdown and text files) and returns the most relevant passages, each with a citation (file > heading) and a relevance score. Use it when the user asks about their documentation, notes or project files. Do not use it for general knowledge or for the current date and time. Write a focused, self-contained query; call it again with a different query if the first results do not answer the question.",
+        InputSchema = new InputSchema
+        {
+            Properties = new Dictionary<string, JsonElement>
+            {
+                ["query"] = JsonSerializer.SerializeToElement(
+                    new { type = "string", description = "What to look for, phrased as a short question or keywords, e.g. 'how is the cache invalidated'." }),
+            },
+            Required = ["query"]
+        }
+    };
 
     internal static List<ToolUnion> All => new()
     {

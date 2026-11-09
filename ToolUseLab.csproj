@@ -17,6 +17,7 @@
   <ItemGroup>
     <PackageReference Include="Anthropic" Version="12.58.0" />
     <PackageReference Include="DotNetEnv" Version="3.2.0" />
+    <PackageReference Include="System.Numerics.Tensors" Version="10.0.14" />
   </ItemGroup>
 
 </Project>

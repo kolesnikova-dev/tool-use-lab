@@ -10,6 +10,7 @@ internal static class ToolNames
     public const string AddDurationToDatetime = "add_duration_to_datetime";
     public const string GetCurrentDatetime = "get_current_datetime";
     public const string TextEditor = "str_replace_based_edit_tool";
+    public const string SearchDocuments = "search_documents";
 }
 
 internal sealed record ToolResult

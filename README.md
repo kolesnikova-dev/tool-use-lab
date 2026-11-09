@@ -93,3 +93,52 @@ Optional `.env` settings: `WEB_SEARCH_ALLOWED_DOMAINS` (comma list, replaces the
 **Safety:** only allowlisted, ASCII-only domains. Search results are untrusted: once any page has been read, file edits and reminders show a warning and ask first, and all model/web text is stripped of terminal control codes before printing. Residual risk: pages on allowed sites (e.g. GitHub, Wikipedia) can still contain injected instructions, so read the confirmation prompts.
 
 Every domain you allow must be crawlable by Anthropic: one blocked domain (such as `stackoverflow.com`) makes the API reject the whole request.
+
+## RAG: search your own documents (opt-in)
+Claude gets a `search_documents` tool that finds passages in your `.md` and `.txt` files and cites where each answer came from. Claude decides when to call it, like any other tool. Embeddings come from [Voyage AI](https://www.voyageai.com/) (Anthropic has no embeddings API); vectors live in memory and are cached in `.rag-cache/index.json`.
+
+```text
+/rag on
+  docs/**/*.md|txt ──chunk──▶ Voyage embeddings ──▶ in-memory index (+ JSON cache)
+you> "How do I turn on web search?"
+  Claude ──tool_use search_documents("turn on web search")──▶ embed query ──▶ cosine top-k
+  ◀── "[1] web-search.md > Web search > Turning it on (score 0.71) ..." ──
+  Claude answers and cites [web-search.md > Web search > Turning it on]
+```
+
+### How to use it
+1. Get a Voyage API key and put `VOYAGE_API_KEY=...` in `.env`. Put your documents in `docs/` (a few samples about this app are included), or set `RAG_DOCS_PATH`.
+2. At the `you>` prompt type `/rag on`. The first run embeds every file; you get `Indexed 3 file(s), 9 chunk(s) (9 embedded, 0 from cache).` Later runs only embed files that changed.
+3. Ask about your documents, e.g. `How do I undo a file edit?` Claude calls the tool and cites `[file > heading]`. General questions don't trigger it.
+4. After editing documents, run `/rag reindex`.
+
+| Command | Effect |
+| --- | --- |
+| `/rag on` / `/rag off` | Build (or reuse) the index and enable the tool, or disable it (off at startup) |
+| `/rag status` | On/off, files, chunks, model, chunking strategy |
+| `/rag reindex` | Re-scan the folder; only changed files are re-embedded. A failed run keeps the old index |
+
+Nothing is sent anywhere at startup. With no `VOYAGE_API_KEY` the app stays quiet and `/rag on` says RAG is unavailable; a key with a bad `RAG_*` value prints `RAG disabled: …` naming it.
+
+### Chunking
+`RAG_CHUNKING` picks how files are split (default `auto`):
+
+| Value | Splits on | Good for |
+| --- | --- | --- |
+| `auto` | markdown for `.md`, sentence for `.txt` | most folders |
+| `markdown` | headings, then paragraphs; keeps the heading path for citations | structured docs |
+| `sentence` | sentence ends, packing whole sentences (`3.5` and `e.g. the` don't split) | prose |
+| `size` | fixed windows that back up to a word boundary | text with no structure |
+
+All strategies stay within `RAG_CHUNK_CHARS` and repeat `RAG_CHUNK_OVERLAP` characters between neighbours.
+
+### Settings (`.env`)
+`VOYAGE_API_KEY` (required), `VOYAGE_MODEL` (`voyage-3.5`), `RAG_DOCS_PATH` (`docs`), `RAG_TOP_K` (4, max 10), `RAG_MIN_SCORE` (0.3: weaker matches are dropped so Claude says "nothing found" instead of guessing), `RAG_CHUNKING` (`auto`), `RAG_CHUNK_CHARS` (1500), `RAG_CHUNK_OVERLAP` (200). Changing the model or any chunking value rebuilds the cache.
+
+### Errors
+Nothing here ends the chat. Bad config, a missing docs folder, a wrong key, rate limits (retried with backoff), network failures and an unreadable cache are reported in one line. Files that are too large (over 1 MB) or not UTF-8 are skipped with a warning naming them. A tool failure is returned to Claude as an error result so it can tell you.
+
+**Cost and privacy:** your document text is sent to Voyage to be embedded, and so is every query Claude searches for. The matching passages are then sent to Anthropic as part of the conversation. Symlinks are never followed. Retrieved passages are treated as data, not instructions, but a document can still contain injected text, so keep untrusted files out of `docs/`.
+
+### Where the code is
+`ChatService/Rag/`: `RagOptions` (settings), `Chunking` (the three chunkers), `VoyageEmbedder` (HTTP), `VectorIndex` (cosine search), `DocumentIndexer` (scan, hash, cache), `RagSession` (on/off and search). The tool follows the usual four places: `ToolNames`, `ToolSchemas`, `ExecuteTool`, plus `/rag` in `ChatService`.

@@ -16,6 +16,8 @@ namespace ToolUseLab
         public bool IsChatStream { get; init; }
 
         public WebSearchOptions? WebSearch { get; init; } // null: web search unavailable
+
+        public RagSession? Rag { get; init; } // null: document search unavailable
     }
 
     internal class Program
@@ -32,6 +34,22 @@ namespace ToolUseLab
             catch (FormatException ex)
             {
                 Console.WriteLine($"Web search disabled: {ex.Message}");
+            }
+
+            // No VOYAGE_API_KEY means the user does not use RAG: stay quiet. A key with bad RAG_* values is worth a message.
+            RagSession? rag = null;
+            if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("VOYAGE_API_KEY")))
+            {
+                try
+                {
+                    var ragOptions = RagOptions.FromEnvironment(Environment.GetEnvironmentVariable);
+                    var http = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+                    rag = new RagSession(ragOptions, new VoyageEmbedder(http, ragOptions.ApiKey, ragOptions.Model));
+                }
+                catch (FormatException ex)
+                {
+                    Console.WriteLine($"RAG disabled: {ex.Message}");
+                }
             }
 
             AnthropicClient client;
@@ -54,6 +72,7 @@ namespace ToolUseLab
             "The dev configured a continuous message loop.",
                 IsChatStream = false,
                 WebSearch = webSearch,
+                Rag = rag,
             };
             try
             {

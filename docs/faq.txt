@@ -1,0 +1,7 @@
+Why is the chat model Claude Haiku? It is fast and cheap, which suits a learning project. Change the Model property of ChatConfig in Program.cs to use another model.
+
+Where does the API key come from? The Anthropic SDK reads ANTHROPIC_API_KEY. The app loads a .env file at startup, so put the key there. The .env file is ignored by git.
+
+Can the reply be streamed? Yes. Set IsChatStream to true in Program.cs and Claude's text appears as it is generated instead of all at once.
+
+What happens when a tool fails? The error message is sent back to Claude as a tool result marked as an error, so Claude can explain the problem or try again. The chat never crashes because of a tool.

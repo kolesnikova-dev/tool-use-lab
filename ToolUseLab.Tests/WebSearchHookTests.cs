@@ -38,11 +38,11 @@ public sealed class WebSearchHookTests : IDisposable
     // ---------- HandleToolUse ----------
 
     [Fact]
-    public void Tool_turns_keep_search_blocks_verbatim_next_to_the_tool_call()
+    public async Task Tool_turns_keep_search_blocks_verbatim_next_to_the_tool_call()
     {
         var messages = new List<MessageParam>();
 
-        ChatService.HandleToolUse(messages, Fixtures.Msg("tool_use", SearchThenTool), new TextEditorTool(), NewWeb());
+        await ChatService.HandleToolUse(messages, Fixtures.Msg("tool_use", SearchThenTool), new TextEditorTool(), NewWeb());
 
         Assert.Equal(2, messages.Count); // assistant echo, then the tool results
         var echoed = Blocks(messages[0]).Select(b => b.Json.GetRawText()).ToList();
@@ -55,12 +55,12 @@ public sealed class WebSearchHookTests : IDisposable
     }
 
     [Fact]
-    public void Tool_turns_without_search_are_echoed_exactly_as_before()
+    public async Task Tool_turns_without_search_are_echoed_exactly_as_before()
     {
         const string plain = """[{"type":"text","text":"Checking."},{"type":"tool_use","id":"toolu_1","name":"get_current_datetime","input":{}}]""";
         var messages = new List<MessageParam>();
 
-        ChatService.HandleToolUse(messages, Fixtures.Msg("tool_use", plain), new TextEditorTool(), web: null);
+        await ChatService.HandleToolUse(messages, Fixtures.Msg("tool_use", plain), new TextEditorTool(), web: null);
 
         Assert.Equal(2, Blocks(messages[0]).Count);
     }
@@ -81,11 +81,11 @@ public sealed class WebSearchHookTests : IDisposable
         JsonSerializer.Deserialize<Dictionary<string, JsonElement>>("""{"content":"Call mum","timestamp":"2026-11-01T10:00:00"}""")!;
 
     [Fact]
-    public void Reminders_run_without_a_prompt_until_web_content_is_present()
+    public async Task Reminders_run_without_a_prompt_until_web_content_is_present()
     {
         Console.SetIn(new StringReader("")); // a prompt would read EOF and decline
 
-        var (content, isError) = ChatService.ExecuteTool(ToolNames.SetReminder, ReminderInput(), new TextEditorTool(), NewWeb(tainted: false));
+        var (content, isError) = await ChatService.ExecuteTool(ToolNames.SetReminder, ReminderInput(), new TextEditorTool(), NewWeb(tainted: false));
 
         Assert.False(isError);
         Assert.Equal("Reminder set.", content);
@@ -93,11 +93,11 @@ public sealed class WebSearchHookTests : IDisposable
     }
 
     [Fact]
-    public void Reminders_after_web_content_ask_first_and_can_be_declined()
+    public async Task Reminders_after_web_content_ask_first_and_can_be_declined()
     {
         Console.SetIn(new StringReader("n\n"));
 
-        var (content, isError) = ChatService.ExecuteTool(ToolNames.SetReminder, ReminderInput(), new TextEditorTool(), NewWeb(tainted: true));
+        var (content, isError) = await ChatService.ExecuteTool(ToolNames.SetReminder, ReminderInput(), new TextEditorTool(), NewWeb(tainted: true));
 
         Assert.True(isError);
         Assert.Contains("declined", content);
@@ -106,11 +106,11 @@ public sealed class WebSearchHookTests : IDisposable
     }
 
     [Fact]
-    public void Reminders_after_web_content_run_when_approved()
+    public async Task Reminders_after_web_content_run_when_approved()
     {
         Console.SetIn(new StringReader("y\n"));
 
-        var (content, isError) = ChatService.ExecuteTool(ToolNames.SetReminder, ReminderInput(), new TextEditorTool(), NewWeb(tainted: true));
+        var (content, isError) = await ChatService.ExecuteTool(ToolNames.SetReminder, ReminderInput(), new TextEditorTool(), NewWeb(tainted: true));
 
         Assert.False(isError);
         Assert.Equal("Reminder set.", content);
